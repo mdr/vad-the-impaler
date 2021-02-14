@@ -1,7 +1,7 @@
 import React from 'react';
 import './App.css';
 import 'semantic-ui-css/semantic.min.css'
-import {Button, Icon} from 'semantic-ui-react'
+import {Button, Container, Grid, Header, Icon, Progress, Segment} from 'semantic-ui-react'
 import * as tf from '@tensorflow/tfjs';
 import {Tensor} from "@tensorflow/tfjs-core";
 
@@ -32,57 +32,121 @@ const normalize = (x: tf.Tensor): tf.Tensor => {
 
 const FRAMES_IN_PATCH = 43
 const FREQUENCY_BINS = 232
+const SPEECH_THRESHOLD = 0.32857817
 
-const startVad = async (): Promise<void> => {
-    const model = await tf.loadLayersModel('model/model.json');
-    model.summary();
-    const audioContext = new AudioContext();
 
-    const audioStream: MediaStream = await navigator.mediaDevices.getUserMedia({audio: true, video: false})
-    const streamSource = audioContext.createMediaStreamSource(audioStream);
-
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 2048
-    analyser.smoothingTimeConstant = 0.0;
-    streamSource.connect(analyser);
-    const frame = new Float32Array(analyser.frequencyBinCount)
-    const frames: Float32Array[] = []
-    const onAudioFrame = async () => {
-        analyser.getFloatFrequencyData(frame);
-        if (frame[0] === -Infinity) {
-            console.log("NEG INF!")
-        } else {
-            frames.push(frame.slice(0, FREQUENCY_BINS))
-        }
-        if (frames.length === FRAMES_IN_PATCH) {
-            console.log("Patch collected")
-            const freqData = flattenQueue(frames);
-            const freqDataTensor = getInputTensorFromFrequencyData(
-                freqData, [1, FRAMES_IN_PATCH, FREQUENCY_BINS, 1]);
-            const normalizedX = normalize(freqDataTensor);
-            const result = model.predict(normalizedX) as Tensor;
-            const res: Float32Array = await result.data() as Float32Array;
-            const prediction = res[0];
-            const isSpeech = prediction > 0.32857817
-            console.log({ isSpeech, confidence: res[0] });
-            tf.dispose([freqDataTensor, normalizedX, result]);
-            frames.length = 0
-        }
-
-    }
-
-    setInterval(onAudioFrame.bind(this), 1000 * 1024 / 44100);
+type AppState = {
+    isRecording: boolean
+    patchInfos: PatchInfo[]
 }
 
+interface PatchInfo {
+    isSpeech: boolean
+    confidence: number
+}
 
-const App = () =>
-    (
-        <div className="App">
-            <Button color='red' onClick={startVad}>
-                <Icon name='microphone'/>
-                Record
-            </Button>
-        </div>
-    )
+class App extends React.Component<{}, AppState> {
+    state: AppState = {
+        isRecording: false,
+        patchInfos: []
+    }
+    interval?: NodeJS.Timeout;
+
+    render() {
+        return (
+            <div className="App">
+                <p/>
+                <Header as='h1'>VAD the Impaler</Header>
+                {this.state.isRecording ?
+                    <Button size='big' color='red' onClick={this.stopVad}>
+                        <Icon name='stop'/>
+                        Stop
+                    </Button>
+                    :
+                    <Button size='big' color='red' onClick={this.startVad}>
+                        <Icon name='microphone'/>
+                        Start Detecting Speech
+                    </Button>}
+                <p/>
+                {this.state.patchInfos.length > 0 &&
+                <Container style={{border: "1px solid", padding: "5px"}}>
+                    <Grid>
+                        {
+                            this.state.patchInfos.map((patchInfo, i) =>
+                                <Grid.Column key={i}>
+                                    {patchInfo.isSpeech ? <Icon size='big' name='chat' color='teal'/> :
+                                        <Icon size='big' name='window minimize'/>}
+                                    <p>
+                                        {Math.round(100 * patchInfo.confidence)}%
+                                    </p>
+                                </Grid.Column>
+                            )
+                        }
+                    </Grid>
+                </Container>
+                }
+            </div>
+        );
+    }
+
+    // <Progress size='small' percent={Math.round(100 * patchInfo.confidence)}
+    //           color={patchInfo.isSpeech ? 'teal' : "grey"} progress/>
+    //
+    stopVad = () => {
+        this.setState({
+            isRecording: false,
+        });
+        if (this.interval)
+            clearInterval(this.interval)
+    }
+
+    startVad = async (): Promise<void> => {
+        this.setState({
+            isRecording: true,
+        });
+        const model = await tf.loadLayersModel('model/model.json');
+        model.summary();
+        const audioContext = new AudioContext();
+
+        const audioStream: MediaStream = await navigator.mediaDevices.getUserMedia({audio: true, video: false})
+        const streamSource = audioContext.createMediaStreamSource(audioStream);
+
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048
+        analyser.smoothingTimeConstant = 0.0;
+        streamSource.connect(analyser);
+        const frame = new Float32Array(analyser.frequencyBinCount)
+        const frames: Float32Array[] = []
+        const onAudioFrame = async () => {
+            analyser.getFloatFrequencyData(frame);
+            if (frame[0] !== -Infinity) {
+                frames.push(frame.slice(0, FREQUENCY_BINS))
+            }
+            if (frames.length === FRAMES_IN_PATCH) {
+                console.log("Patch collected")
+                const freqData = flattenQueue(frames);
+                const freqDataTensor = getInputTensorFromFrequencyData(
+                    freqData, [1, FRAMES_IN_PATCH, FREQUENCY_BINS, 1]);
+                const normalizedX = normalize(freqDataTensor);
+                const result = model.predict(normalizedX) as Tensor;
+                const res: Float32Array = await result.data() as Float32Array;
+                const prediction = res[0];
+                const isSpeech = prediction > SPEECH_THRESHOLD
+                const patchInfo = {isSpeech, confidence: res[0]}
+                this.setState(state => ({
+                    patchInfos: [...state.patchInfos, patchInfo]
+                }))
+                console.log(patchInfo);
+                tf.dispose([freqDataTensor, normalizedX, result]);
+                frames.length = 0
+            }
+
+        }
+
+        const frameDuration = 1000.0 * 1024 / 44100;
+        this.interval = setInterval(onAudioFrame.bind(this), frameDuration);
+    }
+
+}
 
 export default App;
