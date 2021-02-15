@@ -7,15 +7,15 @@ import shutil
 
 random = Random(42)
 
-output_dir = Path('audio.2k')
+output_dir = Path('audio.13k')
 speech_dir = (output_dir / 'speech')
 not_speech_dir = (output_dir / 'not-speech')
 output_dir.mkdir(exist_ok=True)
 speech_dir.mkdir(exist_ok=True)
 not_speech_dir.mkdir(exist_ok=True)
 
-NUMBER_OF_SPEECH_FILES = 1000
-NUMBER_OF_NOT_SPEECH_FILES = 1000
+NUMBER_OF_SPEECH_FILES = 4874
+NUMBER_OF_NOT_SPEECH_FILES = 8598
 
 # Copy and resample "speech" files
 all_speech_paths = Path('vox1_test_wav').rglob('*.wav')

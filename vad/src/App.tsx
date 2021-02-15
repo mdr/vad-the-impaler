@@ -1,7 +1,7 @@
 import React from 'react';
 import './App.css';
 import 'semantic-ui-css/semantic.min.css'
-import {Button, Container, Grid, Header, Icon, Progress, Segment} from 'semantic-ui-react'
+import {Button, Container, Grid, Header, Icon} from 'semantic-ui-react'
 import * as tf from '@tensorflow/tfjs';
 import {Tensor} from "@tensorflow/tfjs-core";
 
@@ -29,11 +29,11 @@ const normalize = (x: tf.Tensor): tf.Tensor => {
         return tf.div(tf.sub(x, mean), tf.add(tf.sqrt(variance), EPSILON!));
     });
 }
-
-const FRAMES_IN_PATCH = 43
-const FREQUENCY_BINS = 232
-const SPEECH_THRESHOLD = 0.32857817
-
+//
+// const FRAMES_IN_PATCH = 43
+// const FREQUENCY_BINS = 232
+// const SPEECH_THRESHOLD = 0.3656232953071594
+//
 
 type AppState = {
     isRecording: boolean
@@ -88,10 +88,6 @@ class App extends React.Component<{}, AppState> {
             </div>
         );
     }
-
-    // <Progress size='small' percent={Math.round(100 * patchInfo.confidence)}
-    //           color={patchInfo.isSpeech ? 'teal' : "grey"} progress/>
-    //
     stopVad = () => {
         this.setState({
             isRecording: false,
@@ -104,8 +100,12 @@ class App extends React.Component<{}, AppState> {
         this.setState({
             isRecording: true,
         });
+        const response = await fetch("model/metadata.json")
+        const { frequencyBins, frames: framesInPatch, threshold: speechThreshold} = await response.json()
         const model = await tf.loadLayersModel('model/model.json');
         model.summary();
+        // await tf.setBackend('cpu')
+        console.log(tf.getBackend());
         const audioContext = new AudioContext();
 
         const audioStream: MediaStream = await navigator.mediaDevices.getUserMedia({audio: true, video: false})
@@ -120,18 +120,18 @@ class App extends React.Component<{}, AppState> {
         const onAudioFrame = async () => {
             analyser.getFloatFrequencyData(frame);
             if (frame[0] !== -Infinity) {
-                frames.push(frame.slice(0, FREQUENCY_BINS))
+                frames.push(frame.slice(0, frequencyBins))
             }
-            if (frames.length === FRAMES_IN_PATCH) {
-                console.log("Patch collected")
+            if (frames.length === framesInPatch) {
+                console.time("patch classified")
                 const freqData = flattenQueue(frames);
                 const freqDataTensor = getInputTensorFromFrequencyData(
-                    freqData, [1, FRAMES_IN_PATCH, FREQUENCY_BINS, 1]);
+                    freqData, [1, framesInPatch, frequencyBins, 1]);
                 const normalizedX = normalize(freqDataTensor);
                 const result = model.predict(normalizedX) as Tensor;
                 const res: Float32Array = await result.data() as Float32Array;
                 const prediction = res[0];
-                const isSpeech = prediction > SPEECH_THRESHOLD
+                const isSpeech = prediction > speechThreshold
                 const patchInfo = {isSpeech, confidence: res[0]}
                 this.setState(state => ({
                     patchInfos: [...state.patchInfos, patchInfo]
@@ -139,6 +139,7 @@ class App extends React.Component<{}, AppState> {
                 console.log(patchInfo);
                 tf.dispose([freqDataTensor, normalizedX, result]);
                 frames.length = 0
+                console.timeEnd("patch classified")
             }
 
         }
